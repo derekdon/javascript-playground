@@ -9,6 +9,7 @@ module.exports = {
             'rx',
             '@cycle/core',
             '@cycle/dom',
+            '@cycle/isolate',
             'lodash'
         ],
         app: './app'

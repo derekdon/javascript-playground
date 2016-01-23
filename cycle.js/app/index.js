@@ -1,46 +1,91 @@
 import Cycle from '@cycle/core';
+import CycleIsolate from '@cycle/isolate';
 import {div, input, label, h2, makeDOMDriver} from '@cycle/dom';
 import Rx from 'rx';
 
-// DOM read effect: detect slider change
-// recalculate BMI
-// DOM write effect: display BMI
+function intent(DOMSource) {
+    return DOMSource.select('.slider').events('input')
+        .map(ev => ev.target.value);
+}
+
+function model(newValue$, props$) {
+    const initialValue$ = props$.map(props => props.init).first();
+    const value$ = initialValue$.concat(newValue$);
+    return Rx.Observable.combineLatest(value$, props$, (value, props) => {
+        return {
+            label: props.label,
+            unit: props.unit,
+            min: props.min,
+            max: props.max,
+            value: value
+        };
+    });
+}
+
+function view(state$) {
+    return state$.map(state =>
+            div('.labeled-slider', [
+                label('.label', `${state.label}: ${state.value}${state.unit}`),
+                input('.slider', {type: 'range', min: state.min, max: state.max, value: state.value})
+            ])
+    );
+}
+
+function LabeledSlider(sources) {
+    const change$ = intent(sources.DOM);
+    const state$ = model(change$, sources.props);
+    const vtree$ = view(state$);
+    return {
+        DOM: vtree$,
+        value: state$.map(state => state.value)
+    };
+}
+
+const IsolatedLabeledSlider = function (sources) {
+    return CycleIsolate(LabeledSlider)(sources);
+}
 
 function main(sources) {
-    const changeWeight$ = sources.DOM.select('.weight').events('input')
-            .map(ev => ev.target.value);
-    const changeHeight$ = sources.DOM.select('.height').events('input')
-            .map(ev => ev.target.value);
+    const weightProps$ = Rx.Observable.of({
+        label: 'Weight', unit: 'kg', min: 40, max: 150, init: 70
+    });
+    const weightSinks = IsolatedLabeledSlider({
+        DOM: sources.DOM, props: weightProps$
+    });
 
-    const state$ = Rx.Observable.combineLatest(
-            changeWeight$.startWith(70),
-            changeHeight$.startWith(170),
-            (weight, height) => {
+    const heightProps$ = Rx.Observable.of({
+        label: 'Height', unit: 'cm', min: 140, max: 220, init: 170
+    });
+    const heightSinks = IsolatedLabeledSlider({
+        DOM: sources.DOM, props: heightProps$
+    });
+
+    const bmi$ = Rx.Observable.combineLatest(
+        weightSinks.value, heightSinks.value,
+        (weight, height) => {
             const heightMeters = height * 0.01;
-    const bmi = Math.round(weight / (heightMeters * heightMeters));
-    return {bmi, weight, height};
-}
-);
+            const bmi = Math.round(weight / (heightMeters * heightMeters));
+            return bmi;
+        }
+    );
 
-return {
-    DOM: state$.map(state =>
-    div([
-        div([
-            label('Weight: ' + state.weight + 'kg'),
-            input('.weight', {type: 'range', min: 40, max: 150, value: state.weight})
-        ]),
-        div([
-            label('Height: ' + state.height + 'cm'),
-            input('.height', {type: 'range', min: 140, max: 220, value: state.height})
-        ]),
-        h2('BMI is ' + state.bmi)
-    ])
-)
-}
+    const vtree$ = Rx.Observable.combineLatest(
+        bmi$, weightSinks.DOM, heightSinks.DOM,
+        (bmi, weightVTree, heightVTree) =>
+            div([
+                weightVTree,
+                heightVTree,
+                h2('BMI is ' + bmi)
+            ])
+    );
+
+    return {
+        DOM: vtree$
+    };
 }
 
 const drivers = {
-    DOM: makeDOMDriver('#app')
-};
+    DOM: makeDOMDriver('#app'),
+}
 
 Cycle.run(main, drivers);
